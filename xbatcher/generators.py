@@ -1,6 +1,7 @@
 """Classes for iterating through xarray datarrays / datasets in batches."""
 
 import itertools
+import random
 import warnings
 from operator import itemgetter
 from typing import Any, Dict, Hashable, Iterator, List, Optional, Sequence, Union
@@ -45,6 +46,8 @@ class BatchSchema:
     preload_batch : bool, optional
         If ``True``, each batch will be loaded into memory before reshaping /
         processing, triggering any dask arrays to be computed.
+    shuffle : bool, optional
+        If ``True``, batches will be in a shuffled order
 
     Notes
     -----
@@ -60,6 +63,7 @@ class BatchSchema:
         concat_input_bins: bool = True,
         preload_batch: bool = True,
         return_partial: bool = False,
+        shuffle: bool = False,
     ):
         if input_overlap is None:
             input_overlap = {}
@@ -71,6 +75,7 @@ class BatchSchema:
         self.concat_input_dims = concat_input_bins
         self.preload_batch = preload_batch
         self.return_partial = return_partial
+        self.shuffle = shuffle
         # Store helpful information based on arguments
         self._duplicate_batch_dims: Dict[Hashable, int] = {
             dim: length
@@ -100,6 +105,9 @@ class BatchSchema:
         """
         # Create an iterator that returns an object usable for .isel in xarray
         patch_selectors = self._gen_patch_selectors(ds)
+        if self.shuffle:
+            patch_selectors = list(patch_selectors)
+            random.shuffle(patch_selectors)
         # Create the Dict containing batch selectors
         if self.concat_input_dims:  # Combine the patches into batches
             return self._combine_patches_into_batch(ds, patch_selectors)
@@ -373,6 +381,8 @@ class BatchGenerator:
     return_partial: bool, optional
         If ``True``, produce batches from edges when dims are not evenly divisible
         by the input dim shapes
+    shuffle : bool, optional
+        If ``True`` batches will be randomly shuffled
 
     Yields
     ------
@@ -389,6 +399,7 @@ class BatchGenerator:
         concat_input_dims: bool = False,
         preload_batch: bool = True,
         return_partial: bool = False,
+        shuffle: bool = False,
     ):
         self.ds = ds
         self._batch_selectors: BatchSchema = BatchSchema(
@@ -399,6 +410,7 @@ class BatchGenerator:
             concat_input_bins=concat_input_dims,
             preload_batch=preload_batch,
             return_partial=return_partial,
+            shuffle=shuffle,
         )
 
     @property
@@ -420,6 +432,15 @@ class BatchGenerator:
     @property
     def preload_batch(self):
         return self._batch_selectors.preload_batch
+
+    def reshuffle(self):
+        shuffle_idx = list(self._batch_selectors.selectors)
+        random.shuffle(shuffle_idx)
+        self._batch_selectors.selectors = {
+            idx: self._batch_selectors.selectors[shuffled_idx]
+            for idx, shuffled_idx in zip(self._batch_selectors.selectors, shuffle_idx)
+        }
+
 
     def __iter__(self) -> Iterator[Union[xr.DataArray, xr.Dataset]]:
         for idx in self._batch_selectors.selectors:
